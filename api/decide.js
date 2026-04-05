@@ -1,6 +1,7 @@
 // /api/decide.js
 
-// import { getDecideLLM } from "../lib/llm/decideLLM.js";
+import { normalizeDecide } from "../lib/decide/normalize.js";
+import { validateDecide } from "../lib/decide/validate.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -11,41 +12,21 @@ export default async function handler(req, res) {
 
   const body = req.body;
 
-  if (!body || typeof body !== "object") {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
     return res.status(400).json({
       error: "invalid_body"
     });
   }
 
-  const { input } = body;
-
-  if (typeof input !== "string" || input.trim().length === 0) {
-    return res.status(400).json({
-      error: "invalid_input"
-    });
-  }
-
   try {
-    const llm = getDecideLLM();
+    const normalized = normalizeDecide(body);
+    validateDecide(normalized);
 
-    const rawOutput = await llm.run(input);
-
-    if (!rawOutput || typeof rawOutput !== "object") {
-      return res.status(502).json({
-        error: "invalid_llm_response"
-      });
-    }
-
-    return res.status(200).json({
-      raw_decide: rawOutput,
-      _meta: {
-        source: "llm_decide"
-      }
-    });
-
+    return res.status(200).json(normalized);
   } catch (err) {
-    return res.status(502).json({
-      error: "llm_execution_failed"
+    return res.status(400).json({
+      error: err?.message || "decide_invalid",
+      meta: err?.meta || null
     });
   }
 }
