@@ -1,29 +1,8 @@
 // /api/execute.js
 
-import fs from "fs/promises";
-import path from "path";
-
-const DATA_PATH = path.join(process.cwd(), "data");
-
-// cache simple por request
-async function loadModel(modelo, cache) {
-  if (cache[modelo]) return cache[modelo];
-
-  try {
-    const filePath = path.join(DATA_PATH, `${modelo}.json`);
-    const raw = await fs.readFile(filePath, "utf-8");
-    const json = JSON.parse(raw);
-
-    cache[modelo] = json;
-    return json;
-
-  } catch (e) {
-    // no rompemos el flujo → devolvemos null
-    console.error(`loadModel error: ${modelo}`, e);
-    cache[modelo] = null;
-    return null;
-  }
-}
+import { validateExecuteBody } from "../lib/execute/validateExecuteBody.js";
+import { validateSingleRequest } from "../lib/execute/validateSingleRequest.js";
+import { resolveExecuteRequest } from "../lib/execute/resolveExecuteRequest.js";
 
 export default async function handler(req, res) {
   try {
@@ -31,46 +10,34 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: "method_not_allowed" });
     }
 
-    const { requests } = req.body || {};
+    const bodyValidation = validateExecuteBody(req.body);
 
-    if (!Array.isArray(requests) || requests.length === 0) {
-      return res.status(400).json({ error: "invalid_requests" });
+    if (!bodyValidation.ok) {
+      return res.status(400).json({ error: bodyValidation.error });
     }
 
+    const { intent, requests, externos = [] } = req.body;
     const cache = {};
     const data = [];
 
-    for (const r of requests) {
-      // validación mínima de tipo
-      if (!r || typeof r !== "object") {
-        return res.status(400).json({ error: "invalid_request_shape" });
+    for (const request of requests) {
+      const requestValidation = validateSingleRequest(request);
+
+      if (!requestValidation.ok) {
+        return res.status(400).json({ error: requestValidation.error });
       }
 
-      const modelo = String(r.modelo || "").toLowerCase();
-      const capa = r.capa;
-      const bloque = r.bloque;
-
-      if (!modelo || !capa || !bloque) {
-        return res.status(400).json({ error: "invalid_request_shape" });
-      }
-
-      const modelJson = await loadModel(modelo, cache);
-
-      const contenido =
-        modelJson?.[capa]?.[bloque] ?? null;
-
-      data.push({
-        modelo,
-        capa,
-        bloque,
-        contenido
-      });
+      const resolved = await resolveExecuteRequest(request, cache);
+      data.push(resolved);
     }
 
-    return res.status(200).json({ data });
-
-  } catch (err) {
-    console.error("execute error:", err);
+    return res.status(200).json({
+      intent,
+      externos,
+      data
+    });
+  } catch (error) {
+    console.error("execute error:", error);
     return res.status(500).json({ error: "internal_error" });
   }
 }
